@@ -125,8 +125,17 @@ async def processar(
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
-    produtos_df = pd.read_csv(produtos.file, sep=";")
-    rotas_df = pd.read_csv(rotas.file, sep=";")
+    def ler_csv(file):
+    conteudo = file.read()
+    for enc in ["utf-8", "latin-1", "cp1252"]:
+        try:
+            return pd.read_csv(BytesIO(conteudo), sep=";", encoding=enc)
+        except (UnicodeDecodeError, Exception):
+            continue
+    raise ValueError("Não foi possível ler o arquivo CSV")
+
+    produtos_df = ler_csv(produtos.file)
+    rotas_df = ler_csv(rotas.file)
 
     produtos_df = produtos_df[["tracking_id", "asin", "title"]]
     rotas_df = rotas_df[["trackingId", "enrichedLegInfo"]]
@@ -178,8 +187,17 @@ async def preview(
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
-    produtos_df = pd.read_csv(produtos.file, sep=";")
-    rotas_df = pd.read_csv(rotas.file, sep=";")
+        def ler_csv(file):
+        conteudo = file.read()
+        for enc in ["utf-8", "latin-1", "cp1252"]:
+            try:
+                return pd.read_csv(BytesIO(conteudo), sep=";", encoding=enc)
+            except (UnicodeDecodeError, Exception):
+                continue
+        raise ValueError("Não foi possível ler o arquivo CSV")
+    
+    produtos_df = ler_csv(produtos.file)
+    rotas_df = ler_csv(rotas.file)
 
     produtos_df = produtos_df[["tracking_id", "asin", "title"]]
     rotas_df = rotas_df[["trackingId", "enrichedLegInfo"]]
