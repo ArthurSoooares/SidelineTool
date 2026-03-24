@@ -187,14 +187,14 @@ async def preview(
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
-        def ler_csv(file):
-            conteudo = file.read()
-            for enc in ["utf-8", "latin-1", "cp1252"]:
-                try:
-                    return pd.read_csv(BytesIO(conteudo), sep=";", encoding=enc)
-                except (UnicodeDecodeError, Exception):
-                    continue
-            raise ValueError("Não foi possível ler o arquivo CSV")
+    def ler_csv(file):
+        conteudo = file.read()
+        for enc in ["utf-8", "latin-1", "cp1252"]:
+            try:
+                return pd.read_csv(BytesIO(conteudo), sep=";", encoding=enc)
+            except (UnicodeDecodeError, Exception):
+                continue
+        raise ValueError("Não foi possível ler o arquivo CSV")
     
     produtos_df = ler_csv(produtos.file)
     rotas_df = ler_csv(rotas.file)
