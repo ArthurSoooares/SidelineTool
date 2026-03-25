@@ -129,7 +129,10 @@ async def processar(
         conteudo = file.read()
         for enc in ["utf-8", "latin-1", "cp1252"]:
             try:
-                return pd.read_csv(BytesIO(conteudo), sep=";", encoding=enc)
+                # Detecta o separador automaticamente
+                amostra = conteudo[:2048].decode(enc)
+                sep = ";" if amostra.count(";") > amostra.count(",") else ","
+                return pd.read_csv(BytesIO(conteudo), sep=sep, encoding=enc)
             except (UnicodeDecodeError, Exception):
                 continue
         raise ValueError("Não foi possível ler o arquivo CSV")
@@ -191,7 +194,10 @@ async def preview(
         conteudo = file.read()
         for enc in ["utf-8", "latin-1", "cp1252"]:
             try:
-                return pd.read_csv(BytesIO(conteudo), sep=";", encoding=enc)
+                # Detecta o separador automaticamente
+                amostra = conteudo[:2048].decode(enc)
+                sep = ";" if amostra.count(";") > amostra.count(",") else ","
+                return pd.read_csv(BytesIO(conteudo), sep=sep, encoding=enc)
             except (UnicodeDecodeError, Exception):
                 continue
         raise ValueError("Não foi possível ler o arquivo CSV")
