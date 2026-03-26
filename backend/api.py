@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from deep_translator import GoogleTranslator
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import pandas as pd
 import re
@@ -14,6 +15,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Cache global de traduções
+_cache_traducoes: dict = {}
+
+
+def ler_csv(file):
+    """Lê CSV detectando encoding e separador automaticamente."""
+    conteudo = file.read()
+    for enc in ["utf-8", "latin-1", "cp1252"]:
+        try:
+            amostra = conteudo[:2048].decode(enc)
+            sep = ";" if amostra.count(";") > amostra.count(",") else ","
+            df = pd.read_csv(BytesIO(conteudo), sep=sep, encoding=enc)
+            # Garante que todos os nomes de colunas são strings
+            df.columns = df.columns.astype(str).str.strip()
+            return df
+        except (UnicodeDecodeError, Exception):
+            continue
+    raise ValueError("Não foi possível ler o arquivo CSV")
 
 
 def extrair_vendedor(texto):
@@ -41,45 +61,53 @@ def pivotar_asins(produtos_df):
     """
     def agrupar(g):
         dados = {}
-        for i, row in enumerate(g.itertuples(index=False)):
-            dados[f"asin_{i+1}"] = row.asin
-            dados[f"title_{i+1}"] = row.title
+        for i, (_, row) in enumerate(g.iterrows()):
+            dados[f"asin_{i+1}"] = row["asin"]
+            dados[f"title_{i+1}"] = row["title"]
         return pd.Series(dados)
 
-    return produtos_df.groupby("tracking_id").apply(agrupar).reset_index()
+    resultado = produtos_df.groupby("tracking_id", sort=False).apply(agrupar)
+    resultado = resultado.reset_index()
+    resultado.columns = resultado.columns.astype(str)
+    return resultado
 
 
 def traduzir_titulos(resultado, translator):
     """
-    Traduz todas as colunas que começam com 'title_'
-    e cria colunas 'title_X_en' ao lado de cada uma.
+    Traduz todas as colunas title_X em paralelo, usando cache global.
     """
+    resultado.columns = resultado.columns.astype(str)
+
     title_cols = [c for c in resultado.columns if re.fullmatch(r"title_\d+", c)]
 
-    # Coleta todos os títulos únicos de todas as colunas
     todos_titulos = set()
     for col in title_cols:
         resultado[col] = resultado[col].fillna("").astype(str)
         todos_titulos.update(resultado[col].unique())
 
-    # Traduz de uma vez
-    traduzidos = {}
-    for t in todos_titulos:
-        if t.strip() == "":
-            traduzidos[t] = ""
-            continue
-        try:
-            traduzidos[t] = translator.translate(t)
-        except:
-            traduzidos[t] = t
+    novos = [t for t in todos_titulos if t.strip() != "" and t not in _cache_traducoes]
 
-    # Insere a coluna _en logo após cada coluna de título original
+    def traduzir_um(texto):
+        try:
+            return texto, translator.translate(texto)
+        except:
+            return texto, texto
+
+    if novos:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            for original, traduzido in executor.map(traduzir_um, novos):
+                _cache_traducoes[original] = traduzido
+
+    _cache_traducoes[""] = ""
+
     colunas_finais = []
     for col in resultado.columns:
         colunas_finais.append(col)
         if col in title_cols:
             en_col = col + "_en"
-            resultado[en_col] = resultado[col].map(traduzidos)
+            resultado[en_col] = resultado[col].map(
+                lambda t: _cache_traducoes.get(t, t)
+            )
             colunas_finais.append(en_col)
 
     return resultado[colunas_finais]
@@ -88,17 +116,19 @@ def traduzir_titulos(resultado, translator):
 def montar_resultado(produtos_df, rotas_df, tbrs):
     """
     Lógica compartilhada entre /processar e /preview.
-    Retorna o DataFrame final já ordenado.
     """
-    # Pivota ASINs múltiplos em colunas separadas
+    produtos_df.columns = produtos_df.columns.astype(str).str.strip()
+    rotas_df.columns = rotas_df.columns.astype(str).str.strip()
+
+    produtos_df = produtos_df[["tracking_id", "asin", "title"]]
+    rotas_df = rotas_df[["trackingId", "enrichedLegInfo"]]
+
     produtos_pivot = pivotar_asins(produtos_df)
 
-    # Prepara rotas — seller é o mesmo para o TBR inteiro
     rotas_df["seller_name"] = rotas_df["enrichedLegInfo"].apply(extrair_vendedor)
     rotas_df["seller_type"] = rotas_df["seller_name"].apply(classificar_seller)
     rotas_df = rotas_df.drop_duplicates(subset="trackingId")
 
-    # Merge principal
     resultado = produtos_pivot.merge(
         rotas_df[["trackingId", "seller_name", "seller_type"]],
         left_on="tracking_id",
@@ -106,7 +136,8 @@ def montar_resultado(produtos_df, rotas_df, tbrs):
         how="left"
     ).drop(columns=["trackingId"])
 
-    # Ordena pela lista de TBRs fornecida
+    resultado.columns = resultado.columns.astype(str)
+
     tbr_lista = re.findall(r"TBR\d+", tbrs)
     if tbr_lista:
         ordem = pd.DataFrame({
@@ -119,58 +150,42 @@ def montar_resultado(produtos_df, rotas_df, tbrs):
     return resultado
 
 
+def renomear(df):
+    """Renomeia colunas para exibição final."""
+    df.columns = df.columns.astype(str)
+    rename_map = {"tracking_id": "TBR", "seller_name": "Seller"}
+    for col in df.columns:
+        if re.fullmatch(r"asin_\d+", col):
+            rename_map[col] = col.upper().replace("_", " ")
+        elif re.fullmatch(r"title_\d+", col):
+            n = col.split("_")[1]
+            rename_map[col] = f"Título {n}"
+        elif re.fullmatch(r"title_\d+_en", col):
+            n = col.split("_")[1]
+            rename_map[col] = f"Title {n} (EN)"
+    return df.rename(columns=rename_map)
+
+
 @app.post("/processar")
 async def processar(
     produtos: UploadFile = File(...),
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
-    def ler_csv(file):
-        conteudo = file.read()
-        for enc in ["utf-8", "latin-1", "cp1252"]:
-            try:
-                # Detecta o separador automaticamente
-                amostra = conteudo[:2048].decode(enc)
-                sep = ";" if amostra.count(";") > amostra.count(",") else ","
-                return pd.read_csv(BytesIO(conteudo), sep=sep, encoding=enc)
-            except (UnicodeDecodeError, Exception):
-                continue
-        raise ValueError("Não foi possível ler o arquivo CSV")
-
     produtos_df = ler_csv(produtos.file)
     rotas_df = ler_csv(rotas.file)
 
-    produtos_df = produtos_df[["tracking_id", "asin", "title"]]
-    rotas_df = rotas_df[["trackingId", "enrichedLegInfo"]]
-
     resultado = montar_resultado(produtos_df, rotas_df, tbrs)
 
-    # Traduz todos os títulos
     translator = GoogleTranslator(source="pt", target="en")
     resultado = traduzir_titulos(resultado, translator)
 
-    # Separa por tipo de seller
     easy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"])
     seller_flex = resultado[resultado["seller_type"] == "Seller Flex"].drop(columns=["seller_type"])
-
-    # Renomeia colunas para exibição
-    def renomear(df):
-        rename_map = {"tracking_id": "TBR", "seller_name": "Seller"}
-        for col in df.columns:
-            if re.fullmatch(r"asin_\d+", col):
-                rename_map[col] = col.upper().replace("_", " ")        # ASIN 1, ASIN 2...
-            elif re.fullmatch(r"title_\d+", col):
-                n = col.split("_")[1]
-                rename_map[col] = f"Título {n}"
-            elif re.fullmatch(r"title_\d+_en", col):
-                n = col.split("_")[1]
-                rename_map[col] = f"Title {n} (EN)"
-        return df.rename(columns=rename_map)
 
     easy_ship = renomear(easy_ship)
     seller_flex = renomear(seller_flex)
 
-    # Gera Excel com duas abas
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         easy_ship.to_excel(writer, index=False, sheet_name="Easy Ship")
@@ -190,32 +205,15 @@ async def preview(
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
-    def ler_csv(file):
-        conteudo = file.read()
-        for enc in ["utf-8", "latin-1", "cp1252"]:
-            try:
-                # Detecta o separador automaticamente
-                amostra = conteudo[:2048].decode(enc)
-                sep = ";" if amostra.count(";") > amostra.count(",") else ","
-                return pd.read_csv(BytesIO(conteudo), sep=sep, encoding=enc)
-            except (UnicodeDecodeError, Exception):
-                continue
-        raise ValueError("Não foi possível ler o arquivo CSV")
-    
     produtos_df = ler_csv(produtos.file)
     rotas_df = ler_csv(rotas.file)
 
-    produtos_df = produtos_df[["tracking_id", "asin", "title"]]
-    rotas_df = rotas_df[["trackingId", "enrichedLegInfo"]]
-
     resultado = montar_resultado(produtos_df, rotas_df, tbrs)
 
-    # Sem tradução no preview — mais rápido
-    # Separa as duas tabelas
     easy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"]).head(10)
     seller_flex = resultado[resultado["seller_type"] == "Seller Flex"].drop(columns=["seller_type"]).head(10)
 
-    headers = list(resultado.drop(columns=["seller_type"]).columns)
+    headers = list(resultado.drop(columns=["seller_type"]).columns.astype(str))
 
     return {
         "headers": headers,
