@@ -59,15 +59,15 @@ def pivotar_asins(produtos_df):
     Se um TBR tiver múltiplos ASINs, cria colunas asin_1, asin_2, ...
     e title_1, title_2, ... para cada um.
     """
-    def agrupar(g):
-        dados = {}
-        for i, (_, row) in enumerate(g.iterrows()):
+    linhas = []
+    for tracking_id, grupo in produtos_df.groupby("tracking_id", sort=False):
+        dados = {"tracking_id": tracking_id}
+        for i, (_, row) in enumerate(grupo.iterrows()):
             dados[f"asin_{i+1}"] = row["asin"]
             dados[f"title_{i+1}"] = row["title"]
-        return pd.Series(dados)
+        linhas.append(dados)
 
-    resultado = produtos_df.groupby("tracking_id", sort=False).apply(agrupar)
-    resultado = resultado.reset_index()
+    resultado = pd.DataFrame(linhas)
     resultado.columns = resultado.columns.astype(str)
     return resultado
 
