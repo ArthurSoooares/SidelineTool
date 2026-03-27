@@ -180,17 +180,16 @@ async def processar(
     translator = GoogleTranslator(source="pt", target="en")
     resultado = traduzir_titulos(resultado, translator)
 
-    easy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"])
-    seller_flex = resultado[resultado["seller_type"] == "Seller Flex"].drop(columns=["seller_type"])
-    
-    # Preenche colunas vazias com —
-    easy_ship = easy_ship.fillna("—")
-    seller_flex = seller_flex.fillna("—")
-    
+    # Aba Todos — ordem original dos TBRs mantida
+    todos = renomear(resultado.drop(columns=["seller_type"]).fillna("—"))
+
+    # Separa por tipo
+    easy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"]).fillna("—")
+    seller_flex = resultado[resultado["seller_type"] == "Seller Flex"].drop(columns=["seller_type"]).fillna("—")
+
     easy_ship = renomear(easy_ship)
     seller_flex = renomear(seller_flex)
-    todos = pd.concat([easy_ship, seller_flex], ignore_index=True)
-    
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         todos.to_excel(writer, index=False, sheet_name="Todos")
