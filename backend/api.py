@@ -189,9 +189,11 @@ async def processar(
     
     easy_ship = renomear(easy_ship)
     seller_flex = renomear(seller_flex)
-
+    todos = pd.concat([easy_ship, seller_flex], ignore_index=True)
+    
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        todos.to_excel(writer, index=False, sheet_name="Todos")
         easy_ship.to_excel(writer, index=False, sheet_name="Easy Ship")
         seller_flex.to_excel(writer, index=False, sheet_name="Seller Flex")
     output.seek(0)
