@@ -180,9 +180,13 @@ async def processar(
     translator = GoogleTranslator(source="pt", target="en")
     resultado = traduzir_titulos(resultado, translator)
 
-    easy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"])
+    eeasy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"])
     seller_flex = resultado[resultado["seller_type"] == "Seller Flex"].drop(columns=["seller_type"])
-
+    
+    # Preenche colunas vazias com —
+    easy_ship = easy_ship.fillna("—")
+    seller_flex = seller_flex.fillna("—")
+    
     easy_ship = renomear(easy_ship)
     seller_flex = renomear(seller_flex)
 
