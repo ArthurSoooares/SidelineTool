@@ -180,7 +180,7 @@ async def processar(
     translator = GoogleTranslator(source="pt", target="en")
     resultado = traduzir_titulos(resultado, translator)
 
-    eeasy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"])
+    easy_ship = resultado[resultado["seller_type"] == "Easy Ship"].drop(columns=["seller_type"])
     seller_flex = resultado[resultado["seller_type"] == "Seller Flex"].drop(columns=["seller_type"])
     
     # Preenche colunas vazias com —
