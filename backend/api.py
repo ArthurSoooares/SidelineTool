@@ -73,43 +73,38 @@ def pivotar_asins(produtos_df):
 
 
 def traduzir_titulos(resultado, translator):
-    """
-    Traduz todas as colunas title_X em paralelo, usando cache global.
-    """
     resultado.columns = resultado.columns.astype(str)
-
     title_cols = [c for c in resultado.columns if re.fullmatch(r"title_\d+", c)]
-
-    todos_titulos = set()
-    for col in title_cols:
-        resultado[col] = resultado[col].fillna("").astype(str)
-        todos_titulos.update(resultado[col].unique())
-
-    novos = [t for t in todos_titulos if t.strip() != "" and t not in _cache_traducoes]
-
-    def traduzir_um(texto):
-        try:
-            return texto, translator.translate(texto)
-        except:
-            return texto, texto
-
-    if novos:
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            for original, traduzido in executor.map(traduzir_um, novos):
-                _cache_traducoes[original] = traduzido
-
-    _cache_traducoes[""] = ""
 
     colunas_finais = []
     for col in resultado.columns:
         colunas_finais.append(col)
         if col in title_cols:
+            resultado[col] = resultado[col].fillna("").astype(str)
+            
+            # Traduz só os títulos únicos desta coluna específica
+            titulos_col = [t for t in resultado[col].unique() if t.strip() != ""]
+            novos = [t for t in titulos_col if t not in _cache_traducoes]
+            
+            def traduzir_um(texto):
+                try:
+                    return texto, translator.translate(texto)
+                except:
+                    return texto, texto
+
+            if novos:
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    for original, traduzido in executor.map(traduzir_um, novos):
+                        _cache_traducoes[original] = traduzido
+            
+            _cache_traducoes[""] = ""
+            
             en_col = col + "_en"
             resultado[en_col] = resultado[col].apply(
                 lambda t, cache=_cache_traducoes: cache.get(t, t)
             )
             colunas_finais.append(en_col)
-    
+
     return resultado[colunas_finais]
 
 def montar_resultado(produtos_df, rotas_df, tbrs):
@@ -171,6 +166,9 @@ async def processar(
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
+    global _cache_traducoes
+    _cache_traducoes = {}  # limpa cache antes de cada processamento
+
     produtos_df = ler_csv(produtos.file)
     rotas_df = ler_csv(rotas.file)
 
