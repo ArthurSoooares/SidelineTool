@@ -105,13 +105,12 @@ def traduzir_titulos(resultado, translator):
         colunas_finais.append(col)
         if col in title_cols:
             en_col = col + "_en"
-            resultado[en_col] = resultado[col].map(
-                lambda t: _cache_traducoes.get(t, t)
+            resultado[en_col] = resultado[col].apply(
+                lambda t, cache=_cache_traducoes: cache.get(t, t)
             )
             colunas_finais.append(en_col)
-
+    
     return resultado[colunas_finais]
-
 
 def montar_resultado(produtos_df, rotas_df, tbrs):
     """
