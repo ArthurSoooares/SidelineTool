@@ -81,28 +81,17 @@ def traduzir_titulos(resultado, translator):
         colunas_finais.append(col)
         if col in title_cols:
             resultado[col] = resultado[col].fillna("").astype(str)
-            
-            # Traduz só os títulos únicos desta coluna específica
-            titulos_col = [t for t in resultado[col].unique() if t.strip() != ""]
-            novos = [t for t in titulos_col if t not in _cache_traducoes]
-            
-            def traduzir_um(texto):
-                try:
-                    return texto, translator.translate(texto)
-                except:
-                    return texto, texto
-
-            if novos:
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    for original, traduzido in executor.map(traduzir_um, novos):
-                        _cache_traducoes[original] = traduzido
-            
-            _cache_traducoes[""] = ""
-            
             en_col = col + "_en"
-            resultado[en_col] = resultado[col].apply(
-                lambda t, cache=_cache_traducoes: cache.get(t, t)
-            )
+
+            def traduzir_celula(texto):
+                if texto.strip() == "":
+                    return ""
+                try:
+                    return translator.translate(texto)
+                except:
+                    return texto
+
+            resultado[en_col] = resultado[col].apply(traduzir_celula)
             colunas_finais.append(en_col)
 
     return resultado[colunas_finais]
@@ -166,9 +155,6 @@ async def processar(
     rotas: UploadFile = File(...),
     tbrs: str = Form(...)
 ):
-    global _cache_traducoes
-    _cache_traducoes = {}  # limpa cache antes de cada processamento
-
     produtos_df = ler_csv(produtos.file)
     rotas_df = ler_csv(rotas.file)
 
